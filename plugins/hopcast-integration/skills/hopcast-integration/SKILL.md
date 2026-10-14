@@ -50,10 +50,13 @@ transfer-listener rules.
 
 ## Step 3 — Collect inputs (ask; never guess)
 
-1. **Distribution source and version.** Get them from `distribution.md`. If a
-   value is still `TODO(hopcast)`, ask the developer for it.
-2. **`sdkKey`** (`pk_live_…`), issued by Hopcast. **Never write it into source
-   files.** Inject it at build time; each platform guide shows how.
+1. **The SDK package.** The packages are public, with no credentials. Install
+   them exactly as `distribution.md` describes for the platform. If a channel is
+   still marked `TODO(hopcast)`, stop and tell the developer to contact Hopcast.
+2. **`sdkKey`** (`pk_live_…`). This is the only credential. The developer gets
+   it from https://console.hopcast.io. **Never write it into source files.**
+   Inject it at build time; each platform guide shows how. Until a valid key is
+   provisioned, the SDK does nothing.
 3. **`userId`**: the app's own logged-in user id. Find where login completes in
    the codebase: `provision` belongs right after it.
 4. **`serviceId`**: short, lowercase, `a-z0-9`, unique to the app, e.g.

@@ -1,40 +1,59 @@
-# Hopcast partner skill
+# Hopcast plugins for coding agents
 
-A Claude Code skill (Agent Skill) that integrates the Hopcast SDK into a partner
-app. It covers Flutter, iOS and Android, in offline, online and hybrid modes.
+The official Hopcast marketplace. It contains the **`hopcast-integration`**
+skill, which integrates the Hopcast device-to-device file-sharing SDK into a
+Flutter, native iOS or native Android app, in offline, online or hybrid mode.
 
-## Before sending it to a partner (Hopcast)
-
-1. Fill in every `TODO(hopcast)` in `hopcast-integration/distribution.md`
-   (`grep -rn "TODO(hopcast)" hopcast-integration`).
-2. Optional: if the partner only uses one platform or one mode, you can delete
-   the files that don't apply. `SKILL.md` already tells the agent to stop when a
-   mode is not available on a platform.
-3. Zip the folder: `zip -r hopcast-integration.zip hopcast-integration`.
-
-## Installing it (partner)
-
-Unzip the folder into the app repository:
+## Install (Claude Code)
 
 ```
-<app-repo>/.claude/skills/hopcast-integration/SKILL.md
+/plugin install hopcast-integration --marketplace Hopcast/hopcast-plugins
 ```
 
-To make it available in every project, use `~/.claude/skills/hopcast-integration/`
-instead. Then, in Claude Code, ask for example *"Integrate Hopcast into this app
-in offline mode"*. The skill loads automatically, or you can invoke it with
-`/hopcast-integration`.
+Before Claude Code 2.1.275, use two commands instead:
 
-## Contents
+```
+/plugin marketplace add Hopcast/hopcast-plugins
+/plugin install hopcast-integration@hopcast
+```
 
-| File | Role |
+Then ask, for example: *"Integrate Hopcast into this app in offline mode"*.
+
+**Updates:** run `/plugin marketplace update hopcast`, or turn on auto-update for
+the `hopcast` marketplace in `/plugin` → Marketplaces.
+
+## Other agents (Cursor, Codex, Copilot, Gemini CLI…)
+
+The skill follows the open [Agent Skills](https://agentskills.io) format. Copy
+the folder `plugins/hopcast-integration/skills/hopcast-integration/` into your
+agent's skills directory. Each release also attaches it as a zip.
+
+## What you need from Hopcast
+
+Only an **SDK key** (`pk_live_…`), from https://console.hopcast.io. The SDK
+packages are public, but do nothing until a valid key provisions the device.
+
+Support: contact@hopcast.io
+
+---
+
+## Maintainers
+
+| Path | Role |
 |---|---|
-| `SKILL.md` | Entry point: platform detection, mode choice, inputs, checklist |
-| `concepts.md` | Concepts shared by all platforms and modes |
-| `distribution.md` | Where to get the SDK and the key (**to fill in**) |
-| `platforms/{flutter,ios,android}.md` | Installation, configuration, public API reference |
-| `modes/{offline,online,hybrid}.md` | Integration flow for each mode |
-| `examples/flutter/hopcast_service.dart` | Flutter reference service (offline), checked with `flutter analyze` |
-| `examples/ios/HopcastManager.swift` | iOS reference manager (3 modes), compiled against the SDK |
-| `examples/android/HopcastManager.kt` | Android reference manager (3 modes), compiled against the SDK |
-| `troubleshooting.md` | Diagnostics |
+| `.claude-plugin/marketplace.json` | Marketplace catalog |
+| `plugins/hopcast-integration/.claude-plugin/plugin.json` | Plugin manifest. **Bump `version` on every change**, otherwise installed copies are not updated. |
+| `plugins/hopcast-integration/skills/hopcast-integration/` | The skill: `SKILL.md`, then `concepts`, `distribution`, `platforms/`, `modes/`, `examples/`, `troubleshooting` |
+
+Release checklist:
+1. `grep -rn "TODO(hopcast)" plugins/`. Every published channel must be filled in.
+2. Bump `version` in `plugin.json`.
+3. Run `claude plugin validate .`
+4. Commit, tag `vX.Y.Z` and push.
+5. Optionally, attach the zip to a GitHub release:
+   ```bash
+   (cd plugins/hopcast-integration/skills && zip -r ../../../hopcast-integration.zip hopcast-integration)
+   ```
+
+The `examples/` sources are compile-checked against the real SDKs (`flutter
+analyze`, `xcodebuild`, Gradle). Re-check them after every SDK API change.

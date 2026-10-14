@@ -11,21 +11,14 @@ Requirements:
 
 ## Step 1 — Dependency
 
-Use the repository and version from `distribution.md`.
+Follow the **Android** section of `distribution.md`. It needs no credentials.
 
 ```kotlin
-// settings.gradle.kts — dependencyResolutionManagement { repositories { … } }
-maven { url = uri("<Maven repo URL from distribution.md>") }
-
 // app/build.gradle.kts
 dependencies {
     implementation("fr.hopcast:sdk-hopcast-android:<version from distribution.md>")
 }
 ```
-
-If the SDK was delivered as an `.aar` file, use the Maven route above if you can.
-A bare `.aar` does not pull the SDK's transitive dependencies (Nearby, OkHttp,
-coroutines…), so you would have to declare each one yourself.
 
 The SDK ships minified, with its own consumer ProGuard rules. **The host needs no
 keep rules.** Do not re-process the AAR.

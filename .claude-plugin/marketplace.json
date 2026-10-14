@@ -1,0 +1,18 @@
+{
+  "name": "hopcast",
+  "owner": {
+    "name": "Hopcast",
+    "email": "contact@hopcast.io"
+  },
+  "metadata": {
+    "description": "Official Hopcast plugins for coding agents."
+  },
+  "plugins": [
+    {
+      "name": "hopcast-integration",
+      "source": "./plugins/hopcast-integration",
+      "description": "Integrate the Hopcast device-to-device file-sharing SDK (Flutter, iOS, Android; offline, online, hybrid).",
+      "category": "development"
+    }
+  ]
+}

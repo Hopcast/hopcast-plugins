@@ -5,19 +5,14 @@ Module: `import HopcastKit`. Every entry point is static on the `HopcastSDK` fac
 
 ## Step 1 — Add the binary package
 
-Get the source from `distribution.md`.
-
-- Xcode: **File → Add Package Dependencies…**, paste the URL, then add the
-  `HopcastKit` product to the app target.
-- Or in `Package.swift`:
+Follow the **iOS** section of `distribution.md`. It is public SwiftPM, with no
+credentials. It covers three project types: `Package.swift`,
+XcodeGen/Tuist, and a plain `.xcodeproj`.
 
 ```swift
-dependencies: [
-    .package(url: "<URL from distribution.md>", from: "<version from distribution.md>")
-],
-targets: [
-    .target(name: "App", dependencies: [.product(name: "HopcastKit", package: "hopcast-sdk-ios")])
-]
+.package(url: "https://github.com/Hopcast/hopcast-sdk-ios", from: "0.4.1")
+// target dependency:
+.product(name: "HopcastKit", package: "hopcast-sdk-ios")
 ```
 
 The binary ships without doc comments. The API semantics are described in this

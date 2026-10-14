@@ -18,25 +18,15 @@ Dart SDK `>=2.17.0`, Flutter `>=3.0.0`.
 
 ## Step 1 — Add the dependency
 
-Get the source from `distribution.md`. **Do not invent a URL or a tag.**
-
-```yaml
-# pubspec.yaml
-dependencies:
-  hopcast_flutter:
-    git:
-      url: <git URL from distribution.md>
-      ref: <tag from distribution.md>      # e.g. v0.3.3
-  # or, vendored next to the app:
-  # hopcast_flutter:
-  #   path: ../hopcast_flutter
-```
+Follow the **Flutter** section of `distribution.md`. **Do not invent a source or
+a version.**
 
 ```bash
-flutter pub get
+flutter pub add hopcast_flutter
 ```
 
-No wiring in `MainActivity` / `AppDelegate`: the plugin registers itself.
+The plugin pulls the native SDKs itself. No wiring is needed in `MainActivity` /
+`AppDelegate`: the plugin registers itself.
 
 ## Step 2 — Choose a `serviceId`
 

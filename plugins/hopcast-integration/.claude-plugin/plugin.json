@@ -1,0 +1,11 @@
+{
+  "name": "hopcast-integration",
+  "version": "1.0.0",
+  "description": "Integrate the Hopcast device-to-device file-sharing SDK into Flutter, native iOS or native Android apps (offline, online and hybrid modes).",
+  "author": {
+    "name": "Hopcast",
+    "email": "contact@hopcast.io"
+  },
+  "homepage": "https://console.hopcast.io",
+  "keywords": ["hopcast", "sdk", "d2d", "peer-to-peer", "file-sharing", "flutter", "ios", "android"]
+}
