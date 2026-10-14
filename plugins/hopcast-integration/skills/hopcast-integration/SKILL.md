@@ -33,16 +33,17 @@ targets), ask which ones to integrate.
 | Mode | Use when | Flutter | iOS | Android |
 |---|---|---|---|---|
 | **offline** | Users choose what to send to whom (AirDrop-like). Works without internet after a one-time enrollment. | ✅ | ✅ | ✅ |
-| **online** | The app distributes **its own content** (episodes, media, documents…) and wants Hopcast to deliver it automatically from nearby devices that already have it. | ❌ | ✅ | ⚠️ preview |
-| **hybrid** | Both, with user-facing switches. | ❌ | ✅ | ⚠️ preview |
+| **online** | The app distributes **its own content** (episodes, media, documents…) and wants Hopcast to deliver it automatically from nearby devices that already have it. | ✅ | ✅ | ✅ |
+| **hybrid** | Both, with user-facing switches. | ✅ | ✅ | ✅ |
+
+Current versions: Flutter `hopcast_flutter` 0.4.0, iOS `HopcastKit` from 0.4.1,
+Android `fr.hopcast:sdk-hopcast-android` 0.5.1.
 
 - If the developer did not say which mode, **ask**, and explain the difference in
   one sentence each.
-- **Flutter is offline only.** If a Flutter app needs online or hybrid, stop and
-  tell the developer to contact Hopcast. Do not try to reach the native SDKs
-  through custom platform channels.
-- For Android online or hybrid, warn the developer that it is a preview and must
-  be validated with Hopcast before production.
+- Every mode is available on every platform. In Flutter, use only the
+  `hopcast_flutter` Dart API: never reach the native SDKs through custom
+  platform channels.
 
 Then read the mode guide: `modes/offline.md`, `modes/online.md` or
 `modes/hybrid.md`. Online and hybrid also rely on the offline guide's
@@ -51,8 +52,10 @@ transfer-listener rules.
 ## Step 3 — Collect inputs (ask; never guess)
 
 1. **The SDK package.** The packages are public, with no credentials. Install
-   them exactly as `distribution.md` describes for the platform. If a channel is
-   still marked `TODO(hopcast)`, stop and tell the developer to contact Hopcast.
+   them exactly as `distribution.md` describes for the platform (SwiftPM for
+   iOS, a Maven repository for Android, a git dependency for Flutter). If
+   installation fails, do not guess other sources: tell the developer to
+   contact Hopcast.
 2. **`sdkKey`** (`pk_live_…`). This is the only credential. The developer gets
    it from https://console.hopcast.io. **Never write it into source files.**
    Inject it at build time; each platform guide shows how. Until a valid key is
@@ -65,8 +68,9 @@ transfer-listener rules.
    first name plus a short random suffix.
 6. Offline mode only: the **acceptance policy** for incoming transfers. Choose
    between accept all, ask the user every time, or allow/block lists.
-7. Online mode only: the **content id scheme**, and where the app downloads its
-   content.
+7. Online / hybrid only: the **content id scheme**, where the app downloads its
+   content, and whether the app already uses Firebase Cloud Messaging (for push
+   wake-ups).
 
 ## Step 4 — Implement
 
@@ -97,16 +101,27 @@ Go through this checklist and tell the developer the result:
 - [ ] The `sdkKey` is injected at build time and not committed.
 - [ ] iOS: the `serviceId` passed to the SDK matches `NSBonjourServices`
       (`_<id>._tcp`, `_<id>._udp`). The three Info.plist keys are present.
-- [ ] Android: desugaring and packaging excludes are configured, and runtime
-      permissions are requested before start. On API 33+ this includes
-      `NEARBY_WIFI_DEVICES`.
+- [ ] Android (native and Flutter): core library desugaring and the META-INF
+      packaging excludes are configured, and runtime permissions are requested
+      before start. On API 33+ this includes `NEARBY_WIFI_DEVICES`.
+- [ ] Android native: the Hopcast Maven repository is declared in
+      `settings.gradle(.kts)` (or `allprojects`). Flutter: it is **not**
+      declared (the plugin embeds the AAR).
+- [ ] Android minified release: the three OkHttp `-dontwarn` rules are present
+      if R8 reports missing `org.conscrypt` / `org.bouncycastle` /
+      `org.openjsse` classes.
+- [ ] Android online / hybrid with push: `firebase-messaging` is a dependency
+      of the app (directly, or through `firebase_messaging` in Flutter).
+- [ ] Flutter iOS: `platform :ios, '15.0'` in the Podfile and a Runner
+      deployment target of 15.0.
 - [ ] Listeners are attached **before** sharing starts (Flutter), or right after
       `build()` (native).
 - [ ] `endpointId`s are resolved fresh before each send and never persisted.
 - [ ] Every incoming invitation is answered, with accept or reject.
 - [ ] Received files are moved out of the SDK cache.
-- [ ] Online: inventory is (re)declared in `onCloudReady`. Content files live at
-      `cacheDirectory/<contentId>`.
+- [ ] Online: inventory is (re)declared on every `onCloudReady` (Flutter:
+      `HopcastOnlineEventType.cloudReady`). Content files live at
+      `cacheDirectory/<contentId>`. `enableOnlineMode()` is called explicitly.
 - [ ] Teardown calls `release()`.
 - [ ] The project builds: `flutter analyze` / `flutter build`, `xcodebuild`, or
       `./gradlew assembleDebug`.
@@ -125,7 +140,8 @@ every call until `provision` has succeeded once.
 ## Hard rules
 
 - Do not call, override or mention backend, broker or API URLs. They belong to
-  the SDK. Use `OnlineConfig()` with its default values.
+  the SDK. Use `OnlineConfig()` / `const HopcastOnlineConfig()` without
+  `brokerUrl`.
 - Do not strip, shrink, repackage or re-sign the shipped binaries.
 - Do not add `<uses-permission>` entries on Android. The SDK merges its own.
 - Do not use APIs that are not listed in the platform guides.

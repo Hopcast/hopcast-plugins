@@ -1,7 +1,4 @@
-# Online mode — cloud-orchestrated delivery (native iOS / Android only)
-
-**Not available in Flutter.** Android support is in **preview**: confirm with
-Hopcast before shipping it.
+# Online mode — cloud-orchestrated delivery (Flutter, iOS, Android)
 
 In online mode, the app does not drive transfers. It tells Hopcast which content
 each device **has** and which content it **needs**. The Hopcast backend then
@@ -15,6 +12,8 @@ device without any user interaction. Transfers are always auto-accepted.
 - **File layout contract.** A device can only serve a content if the file exists
   at **`cacheDirectory/<contentId>`**: the file name is exactly the content id,
   with no extension. After the app downloads a content, it writes it there.
+  Native: `cacheDirectory` is the directory passed to the Builder. Flutter: it is
+  `<getApplicationSupportDirectory()>/hopcast_inbox` (`path_provider`).
 - **Both devices** need online mode enabled, the app in the foreground (unless
   push wake-ups are wired), and to be within D2D range.
 
@@ -31,8 +30,13 @@ provision ─▶ build(.onlineOnly | .hybrid, OnlineConfig(), autoAcceptConnecti
                └─ (receiving side) onFilesToBeDownloaded → TransferListener progress → fileCompleted
 ```
 
-On iOS, call `provision` **before** `build`. On Android, call `build` first, then
-`provision`. See the platform guides.
+Order per platform (see the platform guides):
+- iOS native: `provision` **before** `build`.
+- Android native: `build`, then `provision` (or `provision(context, …)` before
+  `build`).
+- Flutter: `build(mode:, onlineConfig:)`, then `provision`. If `provision` had to
+  enroll the device (first launch), call `release()` + `build()` once, so iOS
+  advertises the provisioned device id.
 
 ## Rules (important)
 
@@ -59,8 +63,12 @@ On iOS, call `provision` **before** `build`. On Android, call `build` first, the
 7. The SDK processes one orchestrated transfer at a time and queues the others.
 8. `onCloudError(reason)` reports orchestration failures, for example
    `destination_unreachable`. These are informational: the cloud retries.
-9. Never override the broker or backend URLs. Use `OnlineConfig()` with its
-   default values.
+9. Never override the broker or backend URLs. Use `OnlineConfig()` /
+   `const HopcastOnlineConfig()` without `brokerUrl`.
+10. Optional: observe the end of each orchestrated transfer with a handoff
+    listener (iOS / Android `TransferHandoffListener` under a tag, Flutter
+    `transferHandoffs`). The SDK already acknowledges instructions itself: this
+    is for UI and analytics only.
 
 ## Push wake-ups (optional, recommended)
 
@@ -98,7 +106,8 @@ func application(_ application: UIApplication,
 
 ### Android
 
-Add Firebase. The SDK does not bundle it.
+Add Firebase. The SDK declares `firebase-messaging` as `compileOnly`: it does
+not bundle it, and the app must add it itself.
 
 ```kotlin
 // root build.gradle.kts
@@ -137,18 +146,81 @@ class AppMessagingService : FirebaseMessagingService() {
 }
 ```
 
+### Flutter
+
+The app owns FCM through `firebase_messaging` (plus the usual FlutterFire
+setup). Keep `const HopcastOnlineConfig()` (`isSecondaryFcm` defaults to `true`
+in Dart) and forward everything; the SDK ignores the messages that are not
+Hopcast's:
+
+```dart
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:hopcast_flutter/hopcast_flutter.dart';
+
+Future<void> wireHopcastPush() async {
+  final hopcast = HopcastFlutter.instance;
+  FirebaseMessaging.onMessage.listen((m) => hopcast.handleFcmMessage(m.data));
+  FirebaseMessaging.instance.onTokenRefresh.listen(hopcast.handleFcmToken);
+  final token = await FirebaseMessaging.instance.getToken();
+  if (token != null) await hopcast.handleFcmToken(token);
+}
+```
+
+On Android, `firebase_messaging` brings the `firebase-messaging` library the SDK
+needs. Do not declare `HopcastFirebaseMessagingService` in a Flutter app.
+
+## Flutter wiring
+
+`examples/flutter/hopcast_service.dart` with `mode: HopcastMode.onlineOnly`
+implements this flow. The core of it:
+
+```dart
+await hopcast.build(
+  deviceId: deviceName,
+  serviceId: 'acmeshare',
+  mode: HopcastMode.onlineOnly,
+  onlineConfig: const HopcastOnlineConfig(),
+);
+// provision if needed (see above), then:
+hopcast.onlineEvents.listen((e) {
+  switch (e.type) {
+    case HopcastOnlineEventType.cloudReady:
+      // Re-declare the whole inventory on every (re)connection.
+      hopcast.reportDownloadedFile(
+          infraType: HopcastInfraType.stored, contentIds: inventory.toList());
+      break;
+    case HopcastOnlineEventType.filesToBeDownloaded:
+      // A delivery is starting; progress follows on transferEvents.
+      break;
+    default:
+      break;
+  }
+});
+await hopcast.enableOnlineMode();
+
+// After the app downloaded a content itself (file at <cache>/<contentId>):
+await hopcast.reportDownloadedFile(
+    infraType: HopcastInfraType.wifi, contentIds: ['episode-1044']);
+// Ask nearby devices for a content:
+final needId = await hopcast.declareNeed(contentId: 'episode-1045', ttlSeconds: 300);
+```
+
+Online deliveries arrive on `transferEvents` as `fileCompleted` with
+`isReceiver == true`; they never raise an `invitation`.
+
 ## Reference code
 
-The online part of `examples/ios/HopcastManager.swift` and
-`examples/android/HopcastManager.kt` covers this flow: `didDownload`,
-`didDelete`, `request`, `cancelRequest`, and the `onCloudReady` re-declaration.
-Instantiate them with `.onlineOnly` / `Mode.ONLINE_ONLY`.
+The online part of `examples/ios/HopcastManager.swift`,
+`examples/android/HopcastManager.kt` and `examples/flutter/hopcast_service.dart`
+covers this flow: `didDownload`, `didDelete`, `request`, `cancelRequest`, and
+the re-declaration on cloud ready. Instantiate them with `.onlineOnly` /
+`Mode.ONLINE_ONLY` / `HopcastMode.onlineOnly`.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| `declareNeed` returns nil/null | The device is not provisioned, the mode is `offlineOnly`, or `OnlineConfig` is missing from the Builder. |
+| `declareNeed` returns nil/null | The device is not provisioned, the mode is `offlineOnly`, or `OnlineConfig` is missing from the Builder. Flutter: the first `build()` of the process wins; `release()` before building in another mode. |
 | `onCloudReady` never fires | `enableOnlineMode()` was not called, the device is not provisioned, there is no connectivity, or `OnlineConfig` is missing. |
 | Transfers never start | Check that: both devices have online mode on and the app in the foreground; they are within D2D range; the serving device declared the content **after** `onCloudReady`; and the file exists at `cacheDirectory/<contentId>`. |
 | Background wake-ups missing | FCM token not forwarded; data messages filtered before forwarding; iOS "Remote notifications" background mode missing. |

@@ -75,19 +75,52 @@ Check the result with `xcodebuild -resolvePackageDependencies`, then build.
 
 | | |
 |---|---|
-| Coordinates | `fr.hopcast:sdk-hopcast-android:TODO(hopcast)` |
-| Repository | `TODO(hopcast)`: Maven Central, which needs no repository declaration |
+| Coordinates | `fr.hopcast:sdk-hopcast-android:0.5.1` |
+| Repository | `https://raw.githubusercontent.com/Hopcast/hopcast-sdk-android/main/maven` (a static Maven repo served from the public GitHub repo `Hopcast/hopcast-sdk-android`) |
 | Auth | none |
 
-```kotlin
-// app/build.gradle.kts
-dependencies {
-    implementation("fr.hopcast:sdk-hopcast-android:<version>")
-}
-```
+1. **Declare the repository** where the project resolves its dependencies.
 
-The SDK's transitive dependencies (Nearby, OkHttp, coroutines…) resolve
-automatically from `google()` and `mavenCentral()`.
+   Modern projects (`settings.gradle.kts`, `dependencyResolutionManagement`):
+   ```kotlin
+   dependencyResolutionManagement {
+       repositories {
+           google()
+           mavenCentral()
+           maven("https://raw.githubusercontent.com/Hopcast/hopcast-sdk-android/main/maven")
+       }
+   }
+   ```
+   Groovy `settings.gradle`:
+   ```groovy
+   dependencyResolutionManagement {
+       repositories {
+           google()
+           mavenCentral()
+           maven { url 'https://raw.githubusercontent.com/Hopcast/hopcast-sdk-android/main/maven' }
+       }
+   }
+   ```
+   Legacy projects that declare repositories in the root `build.gradle` put the
+   same `maven { url '…' }` line in `allprojects { repositories { … } }`.
+
+2. **Add the dependency** (plus the mandatory host configuration described in
+   `platforms/android.md`, step 2):
+   ```kotlin
+   // app/build.gradle.kts
+   dependencies {
+       implementation("fr.hopcast:sdk-hopcast-android:0.5.1")
+       coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")   // mandatory
+   }
+   ```
+
+The SDK's transitive dependencies (Nearby, OkHttp, the MQTT client,
+coroutines…) resolve automatically from `google()` and `mavenCentral()`.
+`com.google.firebase:firebase-messaging` is **not** pulled in: apps that use the
+online or hybrid mode add it themselves (see `modes/online.md`).
+
+Check the result with `./gradlew :app:dependencies --configuration releaseRuntimeClasspath`
+or simply `./gradlew assembleDebug`.
 
 ---
 
@@ -95,19 +128,36 @@ automatically from `google()` and `mavenCentral()`.
 
 | | |
 |---|---|
-| Package | `hopcast_flutter` |
-| Source | `TODO(hopcast)`: pub.dev (`flutter pub add hopcast_flutter`) |
+| Package | `hopcast_flutter` `0.4.0` |
+| Source | git repository `https://github.com/Hopcast/hopcast-sdk-flutter`, tag `0.4.0` (**not** published on pub.dev) |
 | Auth | none |
 
-```bash
-flutter pub add hopcast_flutter
+```yaml
+# pubspec.yaml
+dependencies:
+  hopcast_flutter:
+    git:
+      url: https://github.com/Hopcast/hopcast-sdk-flutter
+      ref: 0.4.0
 ```
 
-The plugin pulls the native SDKs itself: the Android AAR from Maven, and
-HopcastKit on iOS. There are no binaries to copy by hand.
+Then run `flutter pub get`. Do **not** use `flutter pub add hopcast_flutter`
+without the git options: the package is not on pub.dev.
+
+The plugin **embeds** both native SDKs, so there is nothing to install natively:
+- Android: the AAR `fr.hopcast:sdk-hopcast-android:0.5.1` ships inside the plugin
+  as a local Maven repository, which the plugin's Gradle script adds to every
+  project automatically. Do **not** add the Hopcast Maven URL or the Android
+  dependency to the app yourself.
+- iOS: the `HopcastSDKKit.xcframework` is vendored by the plugin's podspec. Do
+  **not** add the `hopcast-sdk-ios` Swift package to the Runner.
+
+The host app still needs the Gradle settings (desugaring, packaging excludes)
+and the iOS settings (deployment target, Info.plist) from
+`platforms/flutter.md`.
 
 ---
 
-> **If a value above is still `TODO(hopcast)`**: that channel is not published
-> yet. Stop and tell the developer to ask contact@hopcast.io for the package.
-> Do not guess coordinates.
+> **If installation fails** (repository unreachable, tag or version not found):
+> do not guess other coordinates or versions. Tell the developer to contact
+> contact@hopcast.io.

@@ -1,6 +1,4 @@
-# Hybrid mode — offline and online side by side (native iOS / Android only)
-
-**Not available in Flutter.** Android support is in **preview**.
+# Hybrid mode — offline and online side by side (Flutter, iOS, Android)
 
 Hybrid mode is the union of `modes/offline.md` and `modes/online.md`. Both
 subsystems share one identity, one `cacheDirectory` and one set of listeners.
@@ -8,14 +6,16 @@ subsystems share one identity, one `cacheDirectory` and one set of listeners.
 
 ## Builder
 
-- iOS: `.setMode(.hybrid)`. Android: `.setMode(Mode.HYBRID)`.
-- `setOnlineConfig(OnlineConfig())` is **required**. Without it, the online
-  subsystem never starts and only a warning is logged.
+- iOS: `.setMode(.hybrid)`. Android: `.setMode(Mode.HYBRID)`. Flutter:
+  `build(…, mode: HopcastMode.hybrid, onlineConfig: const HopcastOnlineConfig())`.
+- Native: `setOnlineConfig(OnlineConfig())` is **required**. Without it, the
+  online subsystem never starts and only a warning is logged.
 - `setAutoAcceptConnections(true)`: cloud-driven connections must not wait for a
   prompt. The **user's** control over offline transfers moves to the transfer
   invitation (`onTransferInvitation`), which still goes through the app's policy
   (`setAutoAcceptTransfers(false)` on iOS, `IncomingTransferPolicy.MANUAL` on
-  Android).
+  Android). Flutter configures this itself: offline transfers raise an
+  `invitation` event, online ones never do.
 
 ## Runtime toggles
 
@@ -31,6 +31,11 @@ HopcastSDK.enableOnlineMode();   HopcastSDK.disableOnlineMode()
 // Android
 HopcastSDK.enableOfflineMode();  HopcastSDK.disableOfflineMode()
 HopcastSDK.enableOnlineMode();   HopcastSDK.disableOnlineMode()
+```
+```dart
+// Flutter: startSharing/stopSharing are the offline toggle
+await hopcast.startSharing();      await hopcast.stopSharing();
+await hopcast.enableOnlineMode();  await hopcast.disableOnlineMode();
 ```
 
 The usual UX gives the user two switches: "Share with people nearby" (offline)
@@ -53,6 +58,7 @@ after every `build()`. Nothing auto-starts.
 
 ## Reference code
 
-Instantiate `examples/ios/HopcastManager.swift` with `.hybrid`, or
-`examples/android/HopcastManager.kt` with `Mode.HYBRID`. Wire their
-`setOfflineEnabled(_:)` and `setOnlineEnabled(_:)` methods to the two switches.
+Instantiate `examples/ios/HopcastManager.swift` with `.hybrid`,
+`examples/android/HopcastManager.kt` with `Mode.HYBRID`, or
+`examples/flutter/hopcast_service.dart` with `HopcastMode.hybrid`. Wire their
+`setOfflineEnabled` and `setOnlineEnabled` methods to the two switches.

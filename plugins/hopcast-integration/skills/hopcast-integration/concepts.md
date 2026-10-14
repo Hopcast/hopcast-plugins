@@ -10,11 +10,11 @@ sees a thin, typed API.
 | Mode | Who decides what is sent | Network needs | Platforms |
 |---|---|---|---|
 | **Offline** | The **app/user**: discover, pick peers, send, accept. | Online only for the one-time enrollment. Reports are uploaded later. | Flutter, iOS, Android |
-| **Online** | The **Hopcast backend**: it tells devices what to fetch from which neighbour, and the SDK executes. | Persistent control connection to the Hopcast backend. Data still flows D2D. | iOS, Android (native only) |
-| **Hybrid** | Both. The app turns either subsystem on or off at runtime (e.g. a user toggle). | As online, when online is enabled. | iOS, Android (native only) |
+| **Online** | The **Hopcast backend**: it tells devices what to fetch from which neighbour, and the SDK executes. | Persistent control connection to the Hopcast backend. Data still flows D2D. | Flutter, iOS, Android |
+| **Hybrid** | Both. The app turns either subsystem on or off at runtime (e.g. a user toggle). | As online, when online is enabled. | Flutter, iOS, Android |
 
-The mode is fixed when the SDK is built, through the Builder (native) or
-implicitly (Flutter is always offline). In every mode, **file data never goes
+The mode is fixed when the SDK is built: through the Builder (`setMode`) on
+native, or the `mode:` argument of `build()` in Flutter. In every mode, **file data never goes
 through a server**: online mode adds a control plane, not a second data path.
 
 ## Concepts shared by every mode
@@ -30,8 +30,9 @@ through a server**: online mode adds a control plane, not a second data path.
 - **The SDK is inert until it is provisioned.** Every D2D call silently does
   nothing. This is the #1 cause of "nothing happens". Guard the call with
   `isProvisioned()`.
-- To switch user or rotate the key, call `clearIdentity()` and then
-  `provision(...)` again.
+- `provision` is idempotent: while an identity is stored it succeeds at once and
+  ignores its arguments. To switch user or rotate the key, call
+  `clearIdentity()` and then `provision(...)` again (all platforms).
 - The backend URL belongs to the SDK. **The app never configures it.**
 
 ### Exchange reporting (automatic)

@@ -1,22 +1,23 @@
 # Android (native) — `sdk-hopcast-android` setup
 
-Supports **offline**, **online** and **hybrid** modes. On Android, online and
-hybrid are **preview**: check with Hopcast before shipping them to production
-(see `distribution.md`).
+Supports **offline**, **online** and **hybrid** modes, at parity with iOS.
+Current version: `fr.hopcast:sdk-hopcast-android:0.5.1`.
 
 Requirements:
-- `minSdk 21`; the SDK targets and compiles against API 34.
+- `minSdk 21`; compileSdk 34 or higher recommended.
 - A device with **Google Play Services** (discovery uses Nearby).
 - **Physical devices** for testing: Nearby does not work on emulators.
 
 ## Step 1 — Dependency
 
-Follow the **Android** section of `distribution.md`. It needs no credentials.
+Follow the **Android** section of `distribution.md`. It needs no credentials:
+declare the Hopcast Maven repository in `settings.gradle(.kts)`
+(`dependencyResolutionManagement`), or in `allprojects` for legacy projects, then:
 
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("fr.hopcast:sdk-hopcast-android:<version from distribution.md>")
+    implementation("fr.hopcast:sdk-hopcast-android:0.5.1")
 }
 ```
 
@@ -30,17 +31,19 @@ android {
     defaultConfig { minSdk = 21 /* or higher */ }
 
     compileOptions {
-        isCoreLibraryDesugaringEnabled = true   // SDK uses java.time / CompletableFuture
+        // MANDATORY, whatever the minSdk: the SDK uses java.time / CompletableFuture
+        isCoreLibraryDesugaringEnabled = true
     }
 
+    // MANDATORY: the MQTT client's transitive jars (netty…) ship duplicate META-INF files
     packaging {
         resources {
             excludes += setOf(
                 "META-INF/INDEX.LIST",
                 "META-INF/io.netty.versions.properties",
                 "META-INF/DEPENDENCIES",
-                "META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/LICENSE.md",
-                "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/NOTICE.md",
+                "META-INF/LICENSE", "META-INF/LICENSE.txt",
+                "META-INF/NOTICE", "META-INF/NOTICE.txt",
             )
             pickFirsts += setOf("META-INF/native-image/**")
         }
@@ -48,12 +51,45 @@ android {
 }
 
 dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }
 ```
 
-Online and hybrid modes need extra configuration (Firebase). See
-`modes/online.md`.
+Groovy equivalent:
+
+```groovy
+android {
+    compileOptions { coreLibraryDesugaringEnabled true }
+    packaging {
+        resources {
+            excludes += ['META-INF/INDEX.LIST', 'META-INF/io.netty.versions.properties',
+                         'META-INF/DEPENDENCIES', 'META-INF/LICENSE', 'META-INF/LICENSE.txt',
+                         'META-INF/NOTICE', 'META-INF/NOTICE.txt']
+            pickFirsts += ['META-INF/native-image/**']
+        }
+    }
+}
+dependencies { coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4' }
+```
+
+**Minified release builds (R8).** OkHttp references optional TLS providers that
+are not on the classpath. If `assembleRelease` fails with *"Missing class
+org.conscrypt…"* (or `org.bouncycastle…` / `org.openjsse…`), add to the app's
+`proguard-rules.pro`:
+
+```
+-dontwarn org.bouncycastle.jsse.**
+-dontwarn org.conscrypt.**
+-dontwarn org.openjsse.**
+```
+
+These are warnings suppressions only. Do not add keep rules for the SDK.
+
+**Firebase.** The SDK declares `firebase-messaging` as `compileOnly`: it is not
+pulled in. Offline-only apps do not need it. Online and hybrid apps add
+`com.google.firebase:firebase-messaging` themselves (with the
+`google-services` plugin and `google-services.json`) to get push wake-ups. See
+`modes/online.md`. Without it, online mode still works while the app runs.
 
 ## Step 3 — Permissions
 
@@ -113,8 +149,11 @@ all three modes. Then follow the mode guide in `modes/`.
 Order on Android: **permissions → `build()` → `provision` → listeners →
 `enable…Mode()`**.
 
-- `provision` requires `build()` first. Otherwise it fails with
-  `IllegalStateException("HopcastSDK not built…")`.
+- The two-argument `provision(sdkKey, userId, callback)` requires `build()`
+  first. Otherwise it fails with `IllegalStateException("HopcastSDK not built…")`.
+- To enroll **before** building (e.g. right after login, elsewhere in the app),
+  use the overload `provision(context, sdkKey, userId, callback)`. It is also
+  safe after `build()`.
 - `build()` creates a process-wide singleton. Later builds return the same
   instance and ignore the new configuration until `HopcastSDK.release()`.
 - Listener setters called before `build()` are silently ignored.
@@ -149,7 +188,8 @@ ContextCompat.startForegroundService(this,
   `getRequiredPermissions()`.
 - Toggle the online subsystem by calling `HopcastSDK.enableOnlineMode()` /
   `disableOnlineMode()` directly. **Do not use the `ServiceActions.ENABLE_ONLINE`
-  or `DISABLE_ONLINE` intents**: they currently have no effect.
+  or `DISABLE_ONLINE` intents**: the service does not handle them in 0.5.1.
+  `ServiceActions.ENABLE_OFFLINE` / `DISABLE_OFFLINE` work.
 
 ## API reference (public surface, `object HopcastSDK`)
 
@@ -157,12 +197,20 @@ Every call is synchronous. Only `provision` takes a callback.
 
 **Identity**
 ```kotlin
-fun provision(sdkKey: String, userId: String, callback: (Result<Unit>) -> Unit)   // callback on main thread
+fun provision(sdkKey: String, userId: String, callback: (Result<Unit>) -> Unit)   // after build(); callback on main thread
+fun provision(context: Context, sdkKey: String, userId: String, callback: (Result<Unit>) -> Unit)   // usable before build()
 val isProvisioned: Boolean
+fun clearIdentity()
 val deviceUuid: String   // "unknown" until provisioned
 ```
-There is **no `clearIdentity()` on Android yet**. To switch user, call
-`provision(...)` again with the new `userId`: it replaces the stored identity.
+- `provision` is **idempotent**: while an identity is stored it succeeds
+  immediately, without a network call, and **ignores** its arguments. To switch
+  user or rotate the key, call `clearIdentity()` first, then `provision(...)`.
+- Failures (in the `Result`): `HopcastIdentityException.Server(statusCode)`
+  (HTTP error; 401/403 usually means a wrong key),
+  `HopcastIdentityException.InvalidResponse`, a `java.io.IOException` (network),
+  or `IllegalStateException` (called before `build()` without the `Context`
+  overload). `HopcastIdentityException` is in package `fr.hopcast.sdk`.
 
 **Setup**
 ```kotlin
@@ -176,7 +224,7 @@ HopcastSDK.Builder(deviceId: String, activity: Activity, lifecycleOwner: Lifecyc
   .setAutoDisconnectAfterTransfer(Boolean)        // default false
   .setTransferWatchdog(stalledTimeoutMs: Long?)   // e.g. 30_000 → TransferFailed(STALLED)
   .setOnWifiStateChangedListener(OnWifiStateChangedListener)
-  .setOnlineConfig(OnlineConfig)                  // REQUIRED for ONLINE_ONLY/HYBRID — use OnlineConfig()
+  .setOnlineConfig(OnlineConfig)                  // REQUIRED for ONLINE_ONLY/HYBRID — OnlineConfig() or OnlineConfig(isSecondaryFcm = true)
   .build()
 fun getRequiredPermissions(): List<String>
 fun isWifiEnabled(): Boolean
@@ -186,6 +234,12 @@ fun release()
 `lifecycleOwner` binds discovery to that lifecycle. Pass `null` to keep it running
 until `release()`. `setAutoAcceptTransfers` is deprecated; use
 `setIncomingTransferPolicy`.
+
+`OnlineConfig(brokerUrl, isSecondaryFcm = false, runAsService = false)`
+(`fr.hopcast.sdk.model`): never pass `brokerUrl` (keep the SDK default).
+`isSecondaryFcm = true` when the app has its own `FirebaseMessagingService`
+(see `modes/online.md`). `runAsService = true` signals that the host keeps the
+optional foreground service running.
 
 **Mode toggles.** They are idempotent. The `enable` calls do nothing until the
 device is provisioned.
@@ -225,6 +279,7 @@ fun setTransferListener(l: TransferListener, tag: String);       fun removeTrans
 fun setOnlineEventListener(l: OnlineEventListener, tag: String); fun removeOnlineEventListener(tag: String)
 fun setNeighborArrivalListener(l: NeighborArrivalListener, tag: String)
 fun setOnAppBytesReceivedListener(l: OnAppBytesReceivedListener, tag: String)
+fun setTransferHandoffListener(l: TransferHandoffListener, tag: String); fun removeTransferHandoffListener(tag: String)
 
 interface DeviceDiscoveryListener { fun onNeighborsChanged(neighbors: List<Neighbor>) }
 interface ConnectionListener {
@@ -242,7 +297,12 @@ interface OnlineEventListener {   // main thread
     fun onCloudDisconnected() {}
     fun onCloudError(reason: String) {}
 }
+fun interface TransferHandoffListener {   // main thread; orchestrated (online) transfers only
+    fun onTransferHandoff(handoff: TransferHandoff)
+}
 ```
+The single-argument `setTransferHandoffListener(listener)` is deprecated (it also
+reports user-driven transfers); use the tagged variant.
 Do not assume which thread discovery, connection and transfer callbacks run on.
 Post to the main thread before touching the UI, as the example does.
 
@@ -272,6 +332,17 @@ data class TransferInvitation(val transferId: String, val sender: Neighbor, val 
                               val totalBytes: Long, val customMetadata: ByteArray?)
 data class BulkPeerOutcome(val peer: Neighbor, val perPeerTransferId: String?, val status: Status,
                            val errorReason: TransferErrorReason?)   // Status { SUCCESS, FAILED }
+data class OnlineConfig(val brokerUrl: String = DEFAULT_BROKER_URL, val isSecondaryFcm: Boolean = false,
+                        val runAsService: Boolean = false)
+data class TransferHandoff(val instructionId: String?, val sessionId: String, val status: HandoffStatus,
+                           val reason: String?, val bytesTotal: Long, val files: List<HandoffFile>,
+                           val peerDeviceId: String, val startedAt: String, val completedAt: String)
+data class HandoffFile(val fileId: String, val bytes: Long, val direction: TransferDirection)
+enum class HandoffStatus { SUCCESS, FAILURE }          // fr.hopcast.sdk.enums
+enum class TransferDirection { UPLOAD, DOWNLOAD }      // fr.hopcast.sdk.enums
+sealed class HopcastIdentityException : Exception {   // fr.hopcast.sdk
+    class NotProvisioned; class InvalidResponse; class Server(val statusCode: Int)
+}
 ```
 
 ## Android-specific behaviour

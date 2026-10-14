@@ -15,6 +15,7 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import fr.hopcast.sdk.HopcastIdentityException
 import fr.hopcast.sdk.HopcastSDK
 import fr.hopcast.sdk.enums.ConnectionState
 import fr.hopcast.sdk.enums.IncomingTransferPolicy
@@ -24,12 +25,15 @@ import fr.hopcast.sdk.enums.TransferEvent
 import fr.hopcast.sdk.listeners.ConnectionListener
 import fr.hopcast.sdk.listeners.DeviceDiscoveryListener
 import fr.hopcast.sdk.listeners.OnlineEventListener
+import fr.hopcast.sdk.listeners.TransferHandoffListener
 import fr.hopcast.sdk.listeners.TransferListener
 import fr.hopcast.sdk.model.BulkPeerOutcome
 import fr.hopcast.sdk.model.Neighbor
 import fr.hopcast.sdk.model.OnlineConfig
+import fr.hopcast.sdk.model.TransferHandoff
 import fr.hopcast.sdk.model.TransferInvitation
 import java.io.File
+import java.io.IOException
 
 class HopcastManager(
     private val context: Context,
@@ -40,7 +44,8 @@ class HopcastManager(
      * content to serve: `cacheDirectory/<contentId>` (file name == content id).
      */
     val cacheDirectory: File = File(context.filesDir, "hopcast"),
-) : DeviceDiscoveryListener, ConnectionListener, TransferListener, OnlineEventListener {
+) : DeviceDiscoveryListener, ConnectionListener, TransferListener, OnlineEventListener,
+    TransferHandoffListener {
 
     companion object {
         private const val TAG = "HopcastManager"
@@ -97,19 +102,43 @@ class HopcastManager(
         HopcastSDK.setDeviceDiscoveryListener(this)
         HopcastSDK.setConnectionListener(this, LISTENER_TAG)
         HopcastSDK.setTransferListener(this, LISTENER_TAG)
-        if (mode != Mode.OFFLINE_ONLY) HopcastSDK.setOnlineEventListener(this, LISTENER_TAG)
+        if (mode != Mode.OFFLINE_ONLY) {
+            HopcastSDK.setOnlineEventListener(this, LISTENER_TAG)
+            HopcastSDK.setTransferHandoffListener(this, LISTENER_TAG)   // orchestrated transfers only
+        }
 
         if (HopcastSDK.isProvisioned) {
             activate()
         } else {
-            // One-time enrollment. Until it succeeds the SDK is INERT (calls silently no-op).
-            HopcastSDK.provision(sdkKey, userId) { result ->   // callback on the main thread
-                result
-                    .onSuccess { activate() }
-                    .onFailure { onError?.invoke("Hopcast enrollment failed: ${it.message}") }
-                // On failure keep the app usable; call start(...) again later.
-            }
+            provisionThen(sdkKey, userId) { activate() }
         }
+    }
+
+    /**
+     * One-time enrollment. Until it succeeds the SDK is INERT (calls silently no-op).
+     * Idempotent: while an identity is stored it succeeds at once and ignores its arguments.
+     */
+    private fun provisionThen(sdkKey: String, userId: String, onSuccess: () -> Unit) {
+        HopcastSDK.provision(sdkKey, userId) { result ->   // callback on the main thread
+            result
+                .onSuccess { onSuccess() }
+                .onFailure { e ->
+                    // Keep the app usable; call start(...) again later.
+                    val why = when (e) {
+                        is HopcastIdentityException.Server -> "HTTP ${e.statusCode} (check the SDK key)"
+                        is HopcastIdentityException -> "unexpected backend response"
+                        is IOException -> "no connectivity"
+                        else -> e.message ?: e.toString()
+                    }
+                    onError?.invoke("Hopcast enrollment failed: $why")
+                }
+        }
+    }
+
+    /** Switch the enrolled user (logout → login as someone else). Call after [start]. */
+    fun switchUser(sdkKey: String, newUserId: String) {
+        HopcastSDK.clearIdentity()
+        provisionThen(sdkKey, newUserId) { activate() }
     }
 
     private fun activate() {
@@ -173,6 +202,7 @@ class HopcastManager(
         HopcastSDK.removeConnectionListener(LISTENER_TAG)
         HopcastSDK.removeTransferListener(LISTENER_TAG)
         HopcastSDK.removeOnlineEventListener(LISTENER_TAG)
+        HopcastSDK.removeTransferHandoffListener(LISTENER_TAG)
         HopcastSDK.setDeviceDiscoveryListener(null)
         HopcastSDK.release()
         connected.clear()
@@ -249,5 +279,11 @@ class HopcastManager(
 
     override fun onCloudError(reason: String) {
         main.post { onError?.invoke("Hopcast cloud: $reason") }
+    }
+
+    override fun onTransferHandoff(handoff: TransferHandoff) {
+        // End of an orchestrated (online) transfer — for UI / analytics only;
+        // the SDK acknowledges the instruction itself.
+        Log.i(TAG, "Handoff ${handoff.instructionId}: ${handoff.status} (${handoff.bytesTotal} bytes)")
     }
 }
