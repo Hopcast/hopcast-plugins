@@ -20,8 +20,8 @@ Before Claude Code 2.1.275, use two commands instead:
 Then ask, for example: *"Integrate Hopcast into this app in offline mode"*.
 
 All three modes (offline, online, hybrid) are covered on every platform. SDK
-versions targeted by the current skill: `hopcast_flutter` 0.4.0, iOS
-`HopcastKit` 0.4.1+, Android `fr.hopcast:sdk-hopcast-android` 0.5.1.
+versions targeted by the current skill: `hopcast_flutter` 0.4.1, iOS
+`HopcastKit` 0.4.1+, Android `fr.hopcast:sdk-hopcast-android` 0.5.2.
 
 **Updates:** run `/plugin marketplace update hopcast`, or turn on auto-update for
 the `hopcast` marketplace in `/plugin` → Marketplaces.

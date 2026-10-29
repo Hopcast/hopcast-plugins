@@ -52,8 +52,12 @@ after every `build()`. Nothing auto-starts.
   - For online content, move or copy the file to `cacheDirectory/<contentId>` so
     the device can serve it again.
   - For offline content, move it to the app's storage.
-- A device runs **one active transfer at a time**. An offline send and an online
-  delivery queue behind each other.
+- A device holds **one D2D link at a time**. Orchestrated deliveries to a busy
+  peer queue behind the running transfer and reuse the link (Android 0.5.2+);
+  the app's own sends to a connected peer are not delayed.
+- Do not `declareNeed` while one of the app's own offline sends to the same
+  peer is running: wait for it to finish (Android native: check
+  `HopcastSDK.isTransferInProgress(endpointId)`). See `modes/online.md`, rule 8.
 - Exchange reports record which flow produced each exchange. Nothing to do.
 
 ## Reference code

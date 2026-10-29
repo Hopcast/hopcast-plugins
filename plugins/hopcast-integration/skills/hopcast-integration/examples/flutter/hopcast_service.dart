@@ -1,4 +1,4 @@
-// Reference integration of hopcast_flutter 0.4.0 — offline, online and hybrid.
+// Reference integration of hopcast_flutter 0.4.1 — offline, online and hybrid.
 //
 // Copy this file into the host app (e.g. lib/services/hopcast_service.dart) and
 // adapt the marked spots: the serviceId, the incoming-transfer policy, what to
@@ -41,6 +41,7 @@ class HopcastService {
   HopcastService({
     required this.deviceName,
     this.mode = HopcastMode.offlineOnly,
+    this.keepConnections = true,
   });
 
   /// Name shown to peers. Generate it once and persist it — don't regenerate
@@ -49,6 +50,20 @@ class HopcastService {
 
   /// offlineOnly (user-driven), onlineOnly (cloud-orchestrated) or hybrid.
   final HopcastMode mode;
+
+  /// Android only (ignored on iOS). `true` keeps the D2D link open across
+  /// sends, so repeated sends to the same peer (photo after photo) skip the
+  /// 13–16 s connection + Wi-Fi Direct upgrade. Set `false` only if each send
+  /// goes to a different peer. The link is freed when you send to another
+  /// peer or call [setOfflineEnabled](false) / [dispose].
+  final bool keepConnections;
+
+  /// Ids returned by our own sendFiles calls, until the send ends. Used to
+  /// avoid filing needs during our own sends.
+  final Set<String> _sendsInFlight = <String>{};
+
+  /// Whether one of our own sends is still running.
+  bool get isSending => _sendsInFlight.isNotEmpty;
 
   bool get _hasOffline => mode != HopcastMode.onlineOnly;
   bool get _hasOnline => mode != HopcastMode.offlineOnly;
@@ -93,6 +108,7 @@ class HopcastService {
         mode: mode,
         // Defaults only — the backend and broker are SDK-owned.
         onlineConfig: _hasOnline ? const HopcastOnlineConfig() : null,
+        autoDisconnectAfterTransfer: !keepConnections,
       );
 
   Future<HopcastStartResult> start({required String userId}) async {
@@ -174,11 +190,14 @@ class HopcastService {
         .map((n) => n.endpointId)
         .toList();
     if (ids.isEmpty || filePaths.isEmpty) return null;
-    return _hopcast.sendFiles(
+    // Several files? Pass them all here: one transfer over one connection.
+    final bulkId = await _hopcast.sendFiles(
       endpointIds: ids,
       filePaths: filePaths,
       metadata: metadata,
     );
+    if (bulkId != null) _sendsInFlight.add(bulkId);
+    return bulkId;
   }
 
   /// Whether Wi-Fi is on (Android). Off ⇒ ~100× slower Bluetooth fallback.
@@ -208,8 +227,12 @@ class HopcastService {
   }
 
   /// Asks nearby devices for [contentId]. Returns the need id, or null.
-  Future<String?> request(String contentId, {int ttlSeconds = 300}) =>
-      _hopcast.declareNeed(contentId: contentId, ttlSeconds: ttlSeconds);
+  /// Not while one of our own sends is running: the orchestrated delivery
+  /// would compete for the single D2D link. Retry after [isSending] is false.
+  Future<String?> request(String contentId, {int ttlSeconds = 300}) async {
+    if (isSending) return null;
+    return _hopcast.declareNeed(contentId: contentId, ttlSeconds: ttlSeconds);
+  }
 
   Future<void> cancelRequest(String needId) => _hopcast.cancelNeed(needId);
 
@@ -234,8 +257,17 @@ class HopcastService {
         if (e.isReceiver && e.localPath != null) {
           _receivedCtrl.add(e.localPath!);
         }
+        // Android, send to an already-connected peer (link kept open): no
+        // bulkStarted/bulkFinished bracket — the last file ends the send.
+        if (!e.isReceiver && e.fileIndex != null && e.fileIndex == e.fileTotal) {
+          _sendsInFlight.remove(e.transferId);
+        }
+        break;
+      case HopcastTransferType.transferFailed:
+        if (!e.isReceiver) _sendsInFlight.remove(e.transferId);
         break;
       case HopcastTransferType.bulkFinished:
+        _sendsInFlight.remove(e.transferId);
         for (final o in e.outcomes ?? const <HopcastTransferOutcome>[]) {
           if (!o.isSuccess) {
             debugPrint('Send to ${o.peerName} failed: ${o.reason}');

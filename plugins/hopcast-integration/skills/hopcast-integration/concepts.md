@@ -64,8 +64,12 @@ the user) on top of that.
   mixed.
 - **Wi-Fi must be on** for speed. With Wi-Fi off, transfers fall back to
   Bluetooth, about 100× slower.
-- **One active transfer at a time** per device. Serialize large or
-  many-recipient sends.
+- **One D2D link at a time** per device. Serialize large or many-recipient
+  sends. For repeated sends to the **same** peer, keep the link open instead of
+  reconnecting each time (Android: a new connection costs 13–16 s of Wi-Fi
+  upgrade across networks); see the platform guides.
+- Android: a phone with its **mobile hotspot** on cannot use Wi-Fi Direct;
+  transfers fall back to a much slower path. Ask users to turn it off.
 - Discovery runs **in the foreground**.
 - Testing needs **two real devices**. Simulators and emulators build and link,
   but cannot discover peers.

@@ -33,7 +33,16 @@ Rules the integration must respect:
 5. For large or many-recipient sends, send to one peer, wait for `bulkFinished`,
    then send to the next.
 6. Before a large send, check Wi-Fi (`isWifiEnabled()` on Android) and ask the
-   user to turn it on if it is off.
+   user to turn it on if it is off. On Android, a phone with its **mobile
+   hotspot** on cannot use Wi-Fi Direct (much slower fallback): ask the user to
+   turn it off.
+7. **Repeated sends to the same peer** (e.g. a photographer sending photo after
+   photo): do **not** disconnect after each transfer. On Android every new
+   connection repays the Wi-Fi Direct upgrade (13–16 s when one phone is on
+   4G). Connect once, keep the link (`setAutoDisconnectAfterTransfer(false)`
+   natively, `build(autoDisconnectAfterTransfer: false)` in Flutter), send each
+   file over the open link or batch files in one `sendFiles`, and disconnect
+   when the session ends. iOS keeps its session open anyway.
 
 ---
 
@@ -167,8 +176,9 @@ Use `examples/android/HopcastManager.kt` with `Mode.OFFLINE_ONLY`.
 It is the same two-step flow as on iOS. First connect with
 `HopcastSDK.inviteNeighbors(listOf(endpointId))`. Then, on
 `onConnectionStateChanged(CONNECTION_ESTABLISHED, peer)`, call
-`HopcastSDK.sendFiles(listOf(endpointId), files)`. `sendFiles` returns `null`
-when the recipient is not connected yet.
+`HopcastSDK.sendFiles(listOf(endpointId), files)`. (Calling `sendFiles` for a
+peer that is not connected yet also works on Android: the SDK queues a bulk send
+and connects itself.)
 
 Builder for offline-only:
 
@@ -178,6 +188,7 @@ HopcastSDK.Builder(displayName, applicationContext, lifecycleOwner, File(filesDi
     .setServiceId("acmeshare")
     .setAutoAcceptConnections(false)
     .setIncomingTransferPolicy(IncomingTransferPolicy.MANUAL)
+    .setAutoDisconnectAfterTransfer(false)   // keep the link across sends to the same peer
     .build()
 // then: provision (if needed) → listeners → HopcastSDK.enableOfflineMode()
 ```
@@ -185,8 +196,14 @@ HopcastSDK.Builder(displayName, applicationContext, lifecycleOwner, File(filesDi
 Android-only helpers:
 - `IncomingTransferPolicy.AUTO_ACCEPT_TRUSTED` together with
   `setTrustStore(SharedPrefsTrustStore(context))` auto-accepts trusted senders.
-- `setAutoDisconnectAfterTransfer(true)` keeps the next transfer at full Wi-Fi
-  speed.
+- `setAutoDisconnectAfterTransfer(false)` keeps the link open, so repeated sends
+  to the same peer skip the 13–16 s connection + Wi-Fi upgrade. End the session
+  with `disconnect(endpointId)`, guarded by
+  `!HopcastSDK.isTransferInProgress(endpointId)` (the example's
+  `endSession`). Use `true` only when each send goes to a different peer.
+- `HopcastSDK.connectedPeers`, `activeTransfers` and
+  `isTransferInProgress(endpointId)` (0.5.2+) tell what is connected and
+  running.
 - `TransferEvent.BulkSendFinished` gives the result for each recipient.
 
 Platform setup: `platforms/android.md`.

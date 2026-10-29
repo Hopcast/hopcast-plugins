@@ -1,14 +1,14 @@
 # Flutter — `hopcast_flutter` setup
 
-`hopcast_flutter` 0.4.0 supports the **offline, online and hybrid** modes on
+`hopcast_flutter` 0.4.1 supports the **offline, online and hybrid** modes on
 both Android and iOS, through one Dart API.
 
 Support matrix:
 
 | | Android | iOS |
 |---|---|---|
-| Min version | API 21 (Android 5.0) | iOS 14.0 for the plugin; **use 15.0** in the app (Xcode 27 rejects deployment targets below 15) |
-| Native core | AAR `fr.hopcast:sdk-hopcast-android:0.5.1`, embedded in the plugin | `HopcastSDKKit.xcframework`, embedded in the plugin |
+| Min version | API 21 (Android 5.0) | **iOS 15.0** (plugin podspec and app) |
+| Native core | AAR `fr.hopcast:sdk-hopcast-android:0.5.2`, embedded in the plugin | `HopcastSDKKit.xcframework`, embedded in the plugin |
 | Registration | automatic (plugin loader) | automatic (plugin loader) |
 
 Package constraints: Dart SDK `>=2.17.0 <4.0.0`, Flutter `>=3.0.0`.
@@ -26,7 +26,7 @@ dependencies:
   hopcast_flutter:
     git:
       url: https://github.com/Hopcast/hopcast-sdk-flutter
-      ref: 0.4.0
+      ref: 0.4.1
 ```
 
 Then `flutter pub get`. The plugin embeds both native SDKs: do **not** add the
@@ -103,9 +103,11 @@ dependencies { coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4' 
   embedded Maven repo to every project (`rootProject.allprojects { repositories
   { … } }`), which that mode rejects. Flutter's default template does not force
   it.
-- **Release builds (R8)**: if `flutter build apk --release` fails with *"Missing
-  class org.conscrypt…"*, add the three `-dontwarn` lines from
-  `platforms/android.md` (step 2) to `android/app/proguard-rules.pro`.
+- **Release builds (R8)**: no Hopcast rule is needed. The embedded AAR (SDK
+  0.5.2) ships complete consumer rules (full mode included) and a
+  reflection-free D2D protocol, so debug and release builds interoperate.
+  Remove any Hopcast-specific rule or manual `io.netty:netty-codec-http`
+  dependency added as a workaround for plugin 0.4.0.
 - **Online / hybrid push**: the native SDK declares `firebase-messaging` as
   `compileOnly`. Apps that want push wake-ups add `firebase_messaging` (and the
   usual FlutterFire setup), which brings it. See `modes/online.md`.
@@ -121,9 +123,9 @@ platform :ios, '15.0'
 ```
 
 Also set the Runner target's iOS Deployment Target to 15.0 (Xcode → Runner →
-General, or `IPHONEOS_DEPLOYMENT_TARGET = 15.0`). The plugin itself needs 14.0,
-but recent Xcode versions (Xcode 27) reject deployment targets below 15.0. Then
-run `cd ios && pod install`.
+General, or `IPHONEOS_DEPLOYMENT_TARGET = 15.0`). Since 0.4.1 the plugin itself
+requires iOS 15.0 (Xcode 27 rejects lower targets). Then run
+`cd ios && pod install`.
 
 `ios/Runner/Info.plist`: replace `acmeshare` with the `serviceId` from step 2.
 The two Bonjour entries must use **exactly** the same value.
@@ -185,7 +187,7 @@ Everything goes through the singleton `HopcastFlutter.instance`
 |---|---|
 | `Future<bool> requestPermissions()` | Android runtime permissions. Always returns `true` on iOS: the system shows the Local Network prompt on the first discovery. |
 | `Future<List<String>> getRequiredPermissions()` | Exact permission list for this API level. Empty on iOS. |
-| `Future<void> build({required String deviceId, String serviceId = 'hopcast', HopcastMode mode = HopcastMode.offlineOnly, HopcastOnlineConfig? onlineConfig})` | Idempotent: one native instance per process until `release()` (later calls ignore their arguments). Always pass `serviceId`. Online / hybrid: pass `onlineConfig: const HopcastOnlineConfig()`. |
+| `Future<void> build({required String deviceId, String serviceId = 'hopcast', HopcastMode mode = HopcastMode.offlineOnly, HopcastOnlineConfig? onlineConfig, bool autoDisconnectAfterTransfer = true})` | Idempotent: one native instance per process until `release()` (later calls ignore their arguments). Always pass `serviceId`. Online / hybrid: pass `onlineConfig: const HopcastOnlineConfig()`. `autoDisconnectAfterTransfer` is **Android only** (ignored on iOS): pass `false` when the app sends repeatedly to the same peer (see below). |
 | `Future<void> provision({required String sdkKey, required String userId})` | One-time online enrollment, called after `build`. Idempotent: succeeds without network, ignoring its arguments, while an identity is stored. Throws `HopcastIdentityException` (a `PlatformException`, code `PROVISION_FAILED` or `NOT_BUILT`), or `PlatformException` `BAD_ARGS`. |
 | `Future<bool> isProvisioned()` | `false` means the SDK is **inert** and every D2D call is a silent no-op. |
 | `Future<void> clearIdentity()` | Removes the stored identity. Call it, then `provision(...)` again, to switch user or rotate the key. |
@@ -195,7 +197,7 @@ Everything goes through the singleton `HopcastFlutter.instance`
 | `Future<void> enableOnlineMode()` / `disableOnlineMode()` | The **online** subsystem toggle. Idempotent. No-op in `offlineOnly` or while unprovisioned (replayed after a successful `provision`). |
 | `Future<void> reportDownloadedFile({required HopcastInfraType infraType, required List<String> contentIds})` | Online inventory: this device now holds these contents. |
 | `Future<void> reportRemovedFile(List<String> contentIds)` | Online inventory: contents deleted locally. |
-| `Future<String?> declareNeed({required String contentId, required int ttlSeconds})` | Online: ask for a content. Returns a `needId`, or `null`. |
+| `Future<String?> declareNeed({required String contentId, required int ttlSeconds})` | Online: ask for a content. Returns a `needId`, or `null`. Do not call it while one of your own `sendFiles` is still running (wait for its `bulkFinished`). |
 | `Future<void> cancelNeed(String needId)` | Online: drop a need. |
 | `Future<void> handleFcmMessage(Map<String, dynamic> data)` / `handleFcmToken(String token)` | Forward FCM data messages and tokens (from `firebase_messaging`). |
 | `Future<bool> isWifiEnabled()` | Always returns `true` on iOS. |
@@ -249,3 +251,43 @@ iOS). A content can be served only if its file exists at
 
 `reason` and `status` hold opaque native enum names, such as `PEERDISCONNECTED`
 or `INVITATIONREJECTED`. Treat them as strings and never match them exhaustively.
+
+There is no `disconnect`, `connectedPeers`, `activeTransfers`,
+`isTransferInProgress` or `runProtocolSelfCheck` in Dart: they are Android-only
+in the native SDK and the plugin exposes only what both platforms have. Track
+your own sends through `transferEvents`, keyed by the id `sendFiles` returned
+(see the next section for when `bulkFinished` is not emitted).
+Never reach them through a custom platform channel.
+
+## Repeated sends to the same peer (Android)
+
+By default (`autoDisconnectAfterTransfer: true`) the Android link is dropped
+after every send, so each `sendFiles` pays a new connection **and** the
+Bluetooth → Wi-Fi Direct upgrade: **13–16 s** when the phones are on different
+networks (e.g. one on 4G). For an app that sends file after file to the same
+peer (a photographer sending each shot), build with:
+
+```dart
+await HopcastFlutter.instance.build(
+  deviceId: deviceName,
+  serviceId: 'acmeshare',
+  autoDisconnectAfterTransfer: false, // Android only; ignored on iOS
+);
+```
+
+- The first `sendFiles` connects; the following ones to that peer reuse the open
+  link and start immediately. **On Android such a send to an already-connected
+  peer emits no `bulkStarted` / `bulkFinished`**: it ends with the sender-side
+  `fileCompleted` whose `fileIndex == fileTotal` (or a `transferFailed`), both
+  carrying the id `sendFiles` returned. The reference service handles both. Or batch several files in **one** `sendFiles`
+  call: one transfer over one connection.
+- A device holds **one** D2D link at a time: while it keeps a link to A, a
+  device B cannot connect to it. The link is freed when the app sends to another
+  peer (after running transfers finish) or calls `stopSharing()`; call
+  `stopSharing()` (or `release()`) when the sharing session ends.
+- iOS ignores the option: its session already stays open until `stopSharing()`
+  / `release()`.
+- **Mobile hotspot (Android).** A phone with Wi-Fi tethering on cannot create the
+  Wi-Fi Direct link (Nearby: `WIFI_HOTSPOT_ENABLED`); transfers fall back to a
+  much slower path (about 38 s to start observed). OS limitation, not fixable:
+  ask users to turn the hotspot off.

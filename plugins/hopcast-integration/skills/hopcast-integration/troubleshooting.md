@@ -3,6 +3,11 @@
 Check the items in order. Most "nothing happens" reports come from the first
 three.
 
+**Android first check: the SDK version.** Native `fr.hopcast:sdk-hopcast-android`
+must be **0.5.2+**; Flutter `hopcast_flutter` must be **0.4.1+** (it embeds
+0.5.2). Several field bugs below exist only in 0.5.1 / plugin 0.4.0: the fix is
+the upgrade, not app-side rules or extra dependencies.
+
 ## Nothing happens / no device discovered
 1. **Not provisioned.** The SDK is inert until `provision` has succeeded once.
    Check `isProvisioned()`. The native logs show a warning on every ignored call.
@@ -28,6 +33,18 @@ three.
 - iOS: the first send to a new peer waits up to about 25 s while the connection
   is set up. Move the devices closer and retry.
 - Look at the `bulkFinished` outcomes for `FAILED` and read the `reason`.
+- Android **release** build only (transfers never complete,
+  `ClassCastException: …LinkedTreeMap cannot be cast to …` on file receipt, or
+  `Can't find '[toLeakAwareBuffer]'` from Netty): SDK 0.5.1 was broken by the
+  app's R8 full-mode pass. Upgrade to 0.5.2 (Flutter 0.4.1), remove any
+  Hopcast keep rules added as a workaround, and confirm with
+  `HopcastSDK.runProtocolSelfCheck()` (native Android: `passed == true`, same
+  `fingerprint` in debug and release).
+- A need (`declareNeed`) and a direct `sendFiles` between the same two devices
+  both fail (`CONNECTION_REJECTED`, `PAYLOAD_FAILURE`, `PEER_DISCONNECTED`):
+  Android 0.5.1. Upgrade to 0.5.2, which serializes and reuses the connection,
+  and do not `declareNeed` during your own send to that peer
+  (`modes/online.md`, rule 8).
 
 ## `sendFiles` returns null
 No readable, non-empty file, or no recipient. Check the paths and resolve
@@ -37,8 +54,22 @@ No readable, non-empty file, or no recipient. Check the paths and resolve
 - Wi-Fi is off on one side, so the transfer fell back to Bluetooth.
 - Android 13+: `NEARBY_WIFI_DEVICES` was not granted, so the transfer cannot
   switch to Wi-Fi.
-- Sends are fired in a tight loop. Serialize them: wait for `bulkFinished`
-  before the next send.
+- Sends to **different** peers are fired in a tight loop. Serialize them: wait
+  for the end of each send (`bulkFinished`, or on Android the last sender-side
+  `fileCompleted` / `TRANSFER_FINISHED` for a send to an already-connected
+  peer) before the next one.
+
+## Every send to the same peer takes 13–16 s (or more) to start (Android)
+- The link is dropped after each transfer, so every send pays a new connection
+  plus the Wi-Fi Direct upgrade (13–16 s when one phone is on 4G / another
+  network). Keep it: `setAutoDisconnectAfterTransfer(false)` (Flutter:
+  `build(autoDisconnectAfterTransfer: false)`), connect once, send over the open
+  link or batch files in one `sendFiles`, disconnect when the session ends. Do
+  not add `disconnect` calls after each transfer.
+- **Mobile hotspot on** (either phone): Nearby reports `MEDIUM_ERROR`
+  `WIFI_HOTSPOT_ENABLED` and falls back to a slower medium (about 38 s to
+  start observed). OS limitation, not fixable by the SDK or the app: ask the
+  user to turn tethering off.
 - Android: the AAR was shrunk or re-processed. Integrate it as is.
 
 ## Build errors
@@ -46,7 +77,8 @@ No readable, non-empty file, or no recipient. Check the paths and resolve
 |---|---|
 | Android: *"Dependency 'fr.hopcast:sdk-hopcast-android:…' requires core library desugaring to be enabled"* | Mandatory whatever the minSdk: set `isCoreLibraryDesugaringEnabled = true` and add `coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:…")` (see the platform guide). Flutter: in `android/app/build.gradle(.kts)`. |
 | Android: *"N files found with path 'META-INF/INDEX.LIST'"* (or `io.netty.versions.properties`, `DEPENDENCIES`, `LICENSE`, `NOTICE`…) | Duplicates from the MQTT client's netty jars. Add the packaging `excludes` / `pickFirsts` block from the platform guide. |
-| Android release / R8: *"Missing class org.conscrypt…"* (or `org.bouncycastle.jsse…`, `org.openjsse…`) | Optional OkHttp TLS providers. Add `-dontwarn org.bouncycastle.jsse.**`, `-dontwarn org.conscrypt.**`, `-dontwarn org.openjsse.**` to `proguard-rules.pro`. Do not add keep rules or shrink the AAR. |
+| Android release / R8: *"Missing class org.conscrypt…"* (or `org.bouncycastle.jsse…`, `org.openjsse…`) | Covered by the SDK's consumer rules since 0.5.2: upgrade (Flutter: plugin 0.4.1). Do not add keep rules or shrink the AAR. |
+| Android online: `onCloudReady` never fires, MQTT/WebSocket connection errors | SDK 0.5.1 (Flutter 0.4.0) missed `io.netty:netty-codec-http`. Upgrade to 0.5.2 (Flutter 0.4.1), where it is transitive, and remove any manual netty dependency. Only if stuck on 0.5.1: `implementation("io.netty:netty-codec-http:4.1.99.Final")`. |
 | Android native: cannot resolve `fr.hopcast:sdk-hopcast-android` | Declare `maven("https://raw.githubusercontent.com/Hopcast/hopcast-sdk-android/main/maven")` where the project resolves dependencies: `dependencyResolutionManagement` in `settings.gradle(.kts)`, or `allprojects` in legacy projects. Declaring it only in `app/build.gradle` fails under `FAIL_ON_PROJECT_REPOS`. |
 | Flutter Android: cannot resolve `fr.hopcast:sdk-hopcast-android` | The plugin embeds the AAR and adds its repo to every project. `settings.gradle(.kts)` must not force `RepositoriesMode.FAIL_ON_PROJECT_REPOS`. Do not add the Maven URL yourself. |
 | Android online / hybrid: unresolved `FirebaseMessagingService` / `RemoteMessage`, `ClassNotFoundException` on `HopcastFirebaseMessagingService`, or no push wake-ups | The SDK declares `firebase-messaging` as `compileOnly`. Add `com.google.firebase:firebase-messaging` (Flutter: `firebase_messaging`) plus the `google-services` setup. Offline-only apps do not need it. |

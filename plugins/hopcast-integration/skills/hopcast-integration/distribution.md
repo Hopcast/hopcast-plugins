@@ -75,7 +75,7 @@ Check the result with `xcodebuild -resolvePackageDependencies`, then build.
 
 | | |
 |---|---|
-| Coordinates | `fr.hopcast:sdk-hopcast-android:0.5.1` |
+| Coordinates | `fr.hopcast:sdk-hopcast-android:0.5.2` |
 | Repository | `https://raw.githubusercontent.com/Hopcast/hopcast-sdk-android/main/maven` (a static Maven repo served from the public GitHub repo `Hopcast/hopcast-sdk-android`) |
 | Auth | none |
 
@@ -109,13 +109,17 @@ Check the result with `xcodebuild -resolvePackageDependencies`, then build.
    ```kotlin
    // app/build.gradle.kts
    dependencies {
-       implementation("fr.hopcast:sdk-hopcast-android:0.5.1")
+       implementation("fr.hopcast:sdk-hopcast-android:0.5.2")
        coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")   // mandatory
    }
    ```
 
-The SDK's transitive dependencies (Nearby, OkHttp, the MQTT client,
-coroutines…) resolve automatically from `google()` and `mavenCentral()`.
+The SDK's transitive dependencies (Nearby, OkHttp, the MQTT client and its
+WebSocket transport `io.netty:netty-codec-http`, coroutines…) resolve
+automatically from `google()` and `mavenCentral()`. Do not add
+`netty-codec-http` yourself: that workaround was only needed with 0.5.1, whose
+POM missed it (online mode never reached `onCloudReady`). If the project pins
+0.5.1, upgrade to 0.5.2 and remove the manual dependency.
 `com.google.firebase:firebase-messaging` is **not** pulled in: apps that use the
 online or hybrid mode add it themselves (see `modes/online.md`).
 
@@ -128,8 +132,8 @@ or simply `./gradlew assembleDebug`.
 
 | | |
 |---|---|
-| Package | `hopcast_flutter` `0.4.0` |
-| Source | git repository `https://github.com/Hopcast/hopcast-sdk-flutter`, tag `0.4.0` (**not** published on pub.dev) |
+| Package | `hopcast_flutter` `0.4.1` |
+| Source | git repository `https://github.com/Hopcast/hopcast-sdk-flutter`, tag `0.4.1` (**not** published on pub.dev) |
 | Auth | none |
 
 ```yaml
@@ -138,19 +142,23 @@ dependencies:
   hopcast_flutter:
     git:
       url: https://github.com/Hopcast/hopcast-sdk-flutter
-      ref: 0.4.0
+      ref: 0.4.1
 ```
 
 Then run `flutter pub get`. Do **not** use `flutter pub add hopcast_flutter`
 without the git options: the package is not on pub.dev.
 
 The plugin **embeds** both native SDKs, so there is nothing to install natively:
-- Android: the AAR `fr.hopcast:sdk-hopcast-android:0.5.1` ships inside the plugin
+- Android: the AAR `fr.hopcast:sdk-hopcast-android:0.5.2` ships inside the plugin
   as a local Maven repository, which the plugin's Gradle script adds to every
   project automatically. Do **not** add the Hopcast Maven URL or the Android
   dependency to the app yourself.
 - iOS: the `HopcastSDKKit.xcframework` is vendored by the plugin's podspec. Do
   **not** add the `hopcast-sdk-ios` Swift package to the Runner.
+
+Plugin 0.4.1 embeds Android SDK 0.5.2 (plugin 0.4.0 embedded 0.5.1: upgrade
+the `ref` if the project still uses it, and drop any manual `netty-codec-http`
+dependency or Hopcast-specific R8 rule added as a workaround).
 
 The host app still needs the Gradle settings (desugaring, packaging excludes)
 and the iOS settings (deployment target, Info.plist) from

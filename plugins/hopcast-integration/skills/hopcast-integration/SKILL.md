@@ -36,8 +36,8 @@ targets), ask which ones to integrate.
 | **online** | The app distributes **its own content** (episodes, media, documents…) and wants Hopcast to deliver it automatically from nearby devices that already have it. | ✅ | ✅ | ✅ |
 | **hybrid** | Both, with user-facing switches. | ✅ | ✅ | ✅ |
 
-Current versions: Flutter `hopcast_flutter` 0.4.0, iOS `HopcastKit` from 0.4.1,
-Android `fr.hopcast:sdk-hopcast-android` 0.5.1.
+Current versions: Flutter `hopcast_flutter` 0.4.1, iOS `HopcastKit` from 0.4.1,
+Android `fr.hopcast:sdk-hopcast-android` 0.5.2.
 
 - If the developer did not say which mode, **ask**, and explain the difference in
   one sentence each.
@@ -107,9 +107,16 @@ Go through this checklist and tell the developer the result:
 - [ ] Android native: the Hopcast Maven repository is declared in
       `settings.gradle(.kts)` (or `allprojects`). Flutter: it is **not**
       declared (the plugin embeds the AAR).
-- [ ] Android minified release: the three OkHttp `-dontwarn` rules are present
-      if R8 reports missing `org.conscrypt` / `org.bouncycastle` /
-      `org.openjsse` classes.
+- [ ] Android: native SDK is `0.5.2`+ / Flutter `ref: 0.4.1`+. No
+      Hopcast-specific R8 rule and no manual `netty-codec-http` dependency
+      (both were 0.5.1 workarounds; remove them). Native release build:
+      `HopcastSDK.runProtocolSelfCheck().passed` is `true`.
+- [ ] Repeated sends to the same peer (Android): the link is kept open
+      (`setAutoDisconnectAfterTransfer(false)` / Flutter
+      `build(autoDisconnectAfterTransfer: false)`), with no `disconnect` after
+      each transfer; disconnect only when the session ends.
+- [ ] Online / hybrid: `declareNeed` is not called while the app's own
+      `sendFiles` to the same peer is running.
 - [ ] Android online / hybrid with push: `firebase-messaging` is a dependency
       of the app (directly, or through `firebase_messaging` in Flutter).
 - [ ] Flutter iOS: `platform :ios, '15.0'` in the Podfile and a Runner

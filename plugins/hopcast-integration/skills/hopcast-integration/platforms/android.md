@@ -1,7 +1,7 @@
 # Android (native) — `sdk-hopcast-android` setup
 
 Supports **offline**, **online** and **hybrid** modes, at parity with iOS.
-Current version: `fr.hopcast:sdk-hopcast-android:0.5.1`.
+Current version: `fr.hopcast:sdk-hopcast-android:0.5.2`.
 
 Requirements:
 - `minSdk 21`; compileSdk 34 or higher recommended.
@@ -17,12 +17,15 @@ declare the Hopcast Maven repository in `settings.gradle(.kts)`
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("fr.hopcast:sdk-hopcast-android:0.5.1")
+    implementation("fr.hopcast:sdk-hopcast-android:0.5.2")
 }
 ```
 
-The SDK ships minified, with its own consumer ProGuard rules. **The host needs no
-keep rules.** Do not re-process the AAR.
+Use **0.5.2 or later**. The SDK ships minified, with its own consumer R8 rules.
+Since 0.5.2 those rules are complete for R8 full mode (the AGP 8+ default) and
+the device-to-device protocol uses no reflection, so **the host needs no
+Hopcast rule** (step 2). Do not re-process the AAR. 0.5.1 is affected by known
+online-mode and release-build bugs: always upgrade it (see `troubleshooting.md`).
 
 ## Step 2 — Host build configuration
 
@@ -72,18 +75,28 @@ android {
 dependencies { coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4' }
 ```
 
-**Minified release builds (R8).** OkHttp references optional TLS providers that
-are not on the classpath. If `assembleRelease` fails with *"Missing class
-org.conscrypt…"* (or `org.bouncycastle…` / `org.openjsse…`), add to the app's
-`proguard-rules.pro`:
+**Minified release builds (R8).** Nothing to add with 0.5.2+. The AAR's
+consumer rules, applied automatically, cover the SDK's public API, services and
+listeners, the MQTT stack (HiveMQ / Netty / JCTools, which resolve members by
+name at runtime), and the `-dontwarn` entries for the optional classes those
+libraries reference (OkHttp's Conscrypt / BouncyCastle / OpenJSSE providers,
+Netty codecs, logging back-ends). A debug build and a release build of the app
+exchange files normally.
 
-```
--dontwarn org.bouncycastle.jsse.**
--dontwarn org.conscrypt.**
--dontwarn org.openjsse.**
-```
+- Do not add `-keep` / `-dontshrink` rules for the SDK, and remove any
+  Hopcast-specific rule added as a 0.5.1 workaround (OkHttp `-dontwarn`,
+  Netty / Gson keeps).
+- Rules for the app's own code and for dependencies it adds itself (e.g.
+  `firebase-messaging`, which ships its own) are still the app's business.
+- To verify a release build, call `HopcastSDK.runProtocolSelfCheck()` (no
+  `build()` or provisioning needed): `passed` must be `true`, and
+  `fingerprint` must be identical in the debug and release variants.
 
-These are warnings suppressions only. Do not add keep rules for the SDK.
+```kotlin
+val check = HopcastSDK.runProtocolSelfCheck()
+if (!check.passed) Log.e("Hopcast", "Protocol self-check failed: ${check.failures}")
+Log.i("Hopcast", "Protocol fingerprint: ${check.fingerprint}")
+```
 
 **Firebase.** The SDK declares `firebase-messaging` as `compileOnly`: it is not
 pulled in. Offline-only apps do not need it. Online and hybrid apps add
@@ -186,10 +199,10 @@ ContextCompat.startForegroundService(this,
 
 - On API 33+, also request `POST_NOTIFICATIONS`. It is not in
   `getRequiredPermissions()`.
-- Toggle the online subsystem by calling `HopcastSDK.enableOnlineMode()` /
-  `disableOnlineMode()` directly. **Do not use the `ServiceActions.ENABLE_ONLINE`
-  or `DISABLE_ONLINE` intents**: the service does not handle them in 0.5.1.
-  `ServiceActions.ENABLE_OFFLINE` / `DISABLE_OFFLINE` work.
+- Toggle a subsystem from the service by starting it with an intent whose
+  action is `ServiceActions.ENABLE_ONLINE`, `DISABLE_ONLINE`, `ENABLE_OFFLINE` or
+  `DISABLE_OFFLINE` (all handled since 0.5.2), or call
+  `HopcastSDK.enable…Mode()` / `disable…Mode()` directly.
 
 ## API reference (public surface, `object HopcastSDK`)
 
@@ -221,7 +234,7 @@ HopcastSDK.Builder(deviceId: String, activity: Activity, lifecycleOwner: Lifecyc
   .setAutoAcceptConnections(Boolean)              // default false; true for online/hybrid
   .setIncomingTransferPolicy(IncomingTransferPolicy) // MANUAL (default) | AUTO_ACCEPT_ALL | AUTO_ACCEPT_TRUSTED
   .setTrustStore(TrustStore)                      // needed by AUTO_ACCEPT_TRUSTED (SharedPrefsTrustStore provided)
-  .setAutoDisconnectAfterTransfer(Boolean)        // default false
+  .setAutoDisconnectAfterTransfer(Boolean)        // see "Connection reuse" below; false for repeated sends
   .setTransferWatchdog(stalledTimeoutMs: Long?)   // e.g. 30_000 → TransferFailed(STALLED)
   .setOnWifiStateChangedListener(OnWifiStateChangedListener)
   .setOnlineConfig(OnlineConfig)                  // REQUIRED for ONLINE_ONLY/HYBRID — OnlineConfig() or OnlineConfig(isSecondaryFcm = true)
@@ -230,6 +243,7 @@ fun getRequiredPermissions(): List<String>
 fun isWifiEnabled(): Boolean
 val mode: Mode
 fun release()
+fun runProtocolSelfCheck(): ProtocolSelfCheckResult   // (passed, failures, fingerprint); works before build()
 ```
 `lifecycleOwner` binds discovery to that lifecycle. Pass `null` to keep it running
 until `release()`. `setAutoAcceptTransfers` is deprecated; use
@@ -258,6 +272,22 @@ fun sendFiles(endpointIds: List<String>, files: List<File>, metadata: ByteArray?
 fun sendFiles(endpointIds: List<String>, files: List<File>, metadata: ByteArray?, disconnectAfterTransfer: Boolean): String?
 fun acceptTransfer(transferId: String); fun rejectTransfer(transferId: String); fun cancelTransfer(transferId: String)
 fun sendBytes(endpointIds: List<String>, bytes: ByteArray): Boolean   // small app messages (≤ ~24 KB) to connected peers
+```
+`sendFiles` to a single, already-connected peer starts at once and returns the
+transfer id. To several peers, or to a peer that is not connected yet, it queues
+a **bulk send**: the SDK connects to each peer in turn and reports
+`BulkSendStarted` / `BulkSendFinished`; the call returns the bulk id. It returns
+`null` only when no file is readable, there is no recipient, or the SDK is not
+provisioned.
+
+**Read-only state (Android only, since 0.5.2).** Snapshots; use the listeners
+to react to changes.
+```kotlin
+val connectedPeers: List<Neighbor>                    // established links
+val activeTransfers: List<ActiveTransfer>             // running + queued orchestrated transfers
+fun isTransferInProgress(endpointId: String): Boolean // anything running / queued / being set up with that peer
+data class ActiveTransfer(val transferId: String, val isReceiver: Boolean,
+                          val peer: Neighbor, val isQueued: Boolean)   // fr.hopcast.sdk.model
 ```
 
 **Online flow**
@@ -338,6 +368,7 @@ data class TransferHandoff(val instructionId: String?, val sessionId: String, va
                            val reason: String?, val bytesTotal: Long, val files: List<HandoffFile>,
                            val peerDeviceId: String, val startedAt: String, val completedAt: String)
 data class HandoffFile(val fileId: String, val bytes: Long, val direction: TransferDirection)
+data class ProtocolSelfCheckResult(val passed: Boolean, val failures: List<String>, val fingerprint: String)
 enum class HandoffStatus { SUCCESS, FAILURE }          // fr.hopcast.sdk.enums
 enum class TransferDirection { UPLOAD, DOWNLOAD }      // fr.hopcast.sdk.enums
 sealed class HopcastIdentityException : Exception {   // fr.hopcast.sdk
@@ -348,8 +379,57 @@ sealed class HopcastIdentityException : Exception {   // fr.hopcast.sdk
 ## Android-specific behaviour
 - Received files are written to `cacheDirectory/<transferId>/<fileName>`. Use
   `FileCompleted.localPath` and move the file out.
-- After a transfer, release the connection, either with
-  `setAutoDisconnectAfterTransfer(true)` or with `disconnect(endpointId)`. The
-  next transfer then gets the full-speed Wi-Fi path.
 - Discovery follows the `lifecycleOwner`: it runs in the foreground and stops in
   the background.
+
+## Connection reuse (repeated sends to the same peer)
+
+Every **new** connection pays the Nearby handshake plus the upgrade from
+Bluetooth to a Wi-Fi Direct / Wi-Fi Aware link: **13–16 s** between devices on
+different networks (e.g. one phone on 4G). Disconnecting after each transfer
+makes an app that sends photo after photo pay it on every send. Instead:
+
+1. Build with `.setAutoDisconnectAfterTransfer(false)`: the link stays open after
+   each send (both the connected-peer path and the bulk path, since 0.5.2).
+2. Connect once (`inviteNeighbors`, or let the first `sendFiles` connect).
+3. Send each new file over the open link (`sendFiles(listOf(endpointId), listOf(file))`),
+   or batch several files in **one** `sendFiles` call: one transfer, one
+   connection.
+4. When the session with that peer ends, call `disconnect(endpointId)`, after
+   checking `isTransferInProgress(endpointId)`: `disconnect` cuts the link at once,
+   including transfers running on it.
+
+```kotlin
+HopcastSDK.inviteNeighbors(listOf(endpointId))   // once
+// on CONNECTION_ESTABLISHED (or endpointId in HopcastSDK.connectedPeers.map { it.endpointId }):
+photos.forEach { HopcastSDK.sendFiles(listOf(endpointId), listOf(it)) }   // reuses the link
+// session over:
+if (!HopcastSDK.isTransferInProgress(endpointId)) HopcastSDK.disconnect(endpointId)
+```
+
+- Without the call, a send to an already-connected peer keeps the link, but a
+  bulk send drops it. `true` drops it after every send. The per-call
+  `sendFiles(…, metadata, disconnectAfterTransfer)` overload overrides it once.
+- A device holds **one** D2D link at a time: while it keeps a link to A, a
+  device B cannot connect to it. The SDK frees the link itself when the app
+  sends to another peer (after the running transfers finish).
+- **Mobile hotspot.** A phone with Wi-Fi tethering on cannot create the Wi-Fi
+  Direct / Aware link (Nearby: `WIFI_HOTSPOT_ENABLED`). Transfers still work on
+  a slower fallback medium and take much longer to start (about 38 s observed).
+  This is an OS limitation no SDK can fix: ask users to turn the hotspot off.
+
+## Concurrency (since 0.5.2)
+
+The app, the online orchestrator and auto-sync can target the same peer at the
+same time. The SDK arbitrates: duplicate connection requests are ignored
+(“already connected” counts as success), cloud-orchestrated sends are
+serialized per peer on the open link, and the SDK never tears down a link that
+another transfer, or a queued send, still uses. The app's own `sendFiles` calls
+to a connected peer are not delayed and may run in parallel.
+
+Still, **do not call `declareNeed` for content that the same peer would serve
+while your own `sendFiles` to that peer is running**: wait for the transfer to
+finish (`TRANSFER_FINISHED` / `BulkSendFinished`), or check
+`HopcastSDK.isTransferInProgress(endpointId)` / `activeTransfers` first. With
+0.5.1 this overlap failed on both sides (`CONNECTION_REJECTED`,
+`PAYLOAD_FAILURE`, `PEER_DISCONNECTED`).

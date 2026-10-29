@@ -60,12 +60,22 @@ Order per platform (see the platform guides):
    events. Read the path from `fileCompleted.localPath`. To make the content
    servable again from this device, copy or move it to
    `cacheDirectory/<contentId>`.
-7. The SDK processes one orchestrated transfer at a time and queues the others.
-8. `onCloudError(reason)` reports orchestration failures, for example
+7. Orchestrated transfers are serialized per peer: one with a busy peer waits
+   in the SDK's queue and reuses the open link when it is free.
+8. **Do not `declareNeed` while one of your own `sendFiles` to the peer that
+   would serve it is still running.** Wait for the end of that transfer
+   (Flutter: `bulkFinished`, or the last sender-side `fileCompleted` for an
+   Android send over a kept link, as `examples/flutter/hopcast_service.dart`
+   tracks; Android: `TRANSFER_FINISHED` / `BulkSendFinished`; iOS: `.finished`). Android 0.5.2 serializes and reuses the
+   connection, but the overlap failed with 0.5.1 (`CONNECTION_REJECTED`,
+   `PAYLOAD_FAILURE`, `PEER_DISCONNECTED`). Android native can check
+   `HopcastSDK.isTransferInProgress(endpointId)` / `activeTransfers` first;
+   these do not exist in Flutter or iOS.
+9. `onCloudError(reason)` reports orchestration failures, for example
    `destination_unreachable`. These are informational: the cloud retries.
-9. Never override the broker or backend URLs. Use `OnlineConfig()` /
+10. Never override the broker or backend URLs. Use `OnlineConfig()` /
    `const HopcastOnlineConfig()` without `brokerUrl`.
-10. Optional: observe the end of each orchestrated transfer with a handoff
+11. Optional: observe the end of each orchestrated transfer with a handoff
     listener (iOS / Android `TransferHandoffListener` under a tag, Flutter
     `transferHandoffs`). The SDK already acknowledges instructions itself: this
     is for UI and analytics only.
@@ -221,6 +231,7 @@ the re-declaration on cloud ready. Instantiate them with `.onlineOnly` /
 | Symptom | Check |
 |---|---|
 | `declareNeed` returns nil/null | The device is not provisioned, the mode is `offlineOnly`, or `OnlineConfig` is missing from the Builder. Flutter: the first `build()` of the process wins; `release()` before building in another mode. |
-| `onCloudReady` never fires | `enableOnlineMode()` was not called, the device is not provisioned, there is no connectivity, or `OnlineConfig` is missing. |
+| `onCloudReady` never fires | `enableOnlineMode()` was not called, the device is not provisioned, there is no connectivity, or `OnlineConfig` is missing. Android: SDK 0.5.1 (or Flutter plugin 0.4.0) missed `io.netty:netty-codec-http`, so the WebSocket connection failed: upgrade to 0.5.2 (Flutter 0.4.1), where it is transitive; if upgrading is impossible, add `implementation("io.netty:netty-codec-http:4.1.99.Final")`. |
+| Need and direct send to the same peer both fail (`CONNECTION_REJECTED`, `PAYLOAD_FAILURE`, `PEER_DISCONNECTED`) | Android 0.5.1 overlap bug: upgrade to 0.5.2, and do not `declareNeed` while your own `sendFiles` to that peer is running (rule 8). |
 | Transfers never start | Check that: both devices have online mode on and the app in the foreground; they are within D2D range; the serving device declared the content **after** `onCloudReady`; and the file exists at `cacheDirectory/<contentId>`. |
 | Background wake-ups missing | FCM token not forwarded; data messages filtered before forwarding; iOS "Remote notifications" background mode missing. |

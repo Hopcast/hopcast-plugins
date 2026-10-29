@@ -1,4 +1,5 @@
 // Reference integration of the Hopcast Android SDK (native) — all three modes.
+// Targets fr.hopcast:sdk-hopcast-android 0.5.2 (no app-side R8 rule needed).
 //
 // Copy into the host app (adapt the package) and the marked spots. One class
 // owns the SDK: build, provisioning, listeners, offline (manual) flow and
@@ -94,6 +95,10 @@ class HopcastManager(
             // must not wait for a prompt.
             .setAutoAcceptConnections(mode != Mode.OFFLINE_ONLY)
             .setIncomingTransferPolicy(IncomingTransferPolicy.MANUAL)
+            // Keep the D2D link open across sends: repeated sends to the same peer
+            // (photo after photo) skip the 13–16 s connection + Wi-Fi Direct upgrade.
+            // Close it with endSession() when the user is done with that peer.
+            .setAutoDisconnectAfterTransfer(false)
         if (mode != Mode.OFFLINE_ONLY) {
             builder.setOnlineConfig(OnlineConfig())   // defaults only — the backend is SDK-owned
         }
@@ -160,15 +165,33 @@ class HopcastManager(
 
     // ---------------------------------------------- offline flow: connect, send
 
-    /** Sends [files] to [peer]: connects first if needed; files go out once connected. */
+    /**
+     * Sends [files] to [peer]: connects first if needed; files go out once connected.
+     * Call it again for each new file: the open link is reused. Several files at once?
+     * Pass them in one call — one transfer over one connection.
+     */
     fun send(files: List<File>, peer: Neighbor) {
-        if (peer.endpointId in connected) {
+        if (peer.endpointId in connected || HopcastSDK.connectedPeers.any { it.endpointId == peer.endpointId }) {
             HopcastSDK.sendFiles(listOf(peer.endpointId), files)
         } else {
             pendingSends.getOrPut(peer.endpointId) { mutableListOf() } += files
             HopcastSDK.inviteNeighbors(listOf(peer.endpointId))
         }
     }
+
+    /**
+     * The sharing session with [peer] is over: free the link (a device holds one D2D link
+     * at a time). disconnect() cuts running transfers, so check first.
+     * @return false if a transfer is still running — retry after it finishes.
+     */
+    fun endSession(peer: Neighbor): Boolean {
+        if (HopcastSDK.isTransferInProgress(peer.endpointId)) return false
+        HopcastSDK.disconnect(peer.endpointId)
+        return true
+    }
+
+    /** Whether anything (yours or orchestrated) is running or queued with [peer]. */
+    fun isBusy(peer: Neighbor): Boolean = HopcastSDK.isTransferInProgress(peer.endpointId)
 
     /** ADAPT: incoming connection policy (offline-only mode; auto-accepted otherwise). */
     fun shouldAcceptConnection(neighbor: Neighbor): Boolean = true
@@ -190,7 +213,11 @@ class HopcastManager(
         HopcastSDK.reportRemovedFile(listOf(contentId))
     }
 
-    /** Asks nearby devices for [contentId]. Returns the need id (or null if not possible). */
+    /**
+     * Asks nearby devices for [contentId]. Returns the need id (or null if not possible).
+     * Don't call it while your own send to the peer that would serve it is running
+     * (wait for TRANSFER_FINISHED / BulkSendFinished, or check [isBusy]).
+     */
     fun request(contentId: String, ttlSeconds: Int = 300): String? =
         HopcastSDK.declareNeed(contentId, ttlSeconds)
 
